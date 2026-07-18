@@ -1,0 +1,69 @@
+---
+- name: Flush gitea queues
+  ansible.builtin.command: "{{ gitea_bin }} --config {{ gitea_conf }} --work-path {{ gitea_home }} manager flush-queues"
+  become: true
+  become_user: "{{ gitea_user }}"
+  become_method: "{{ gitea_effective_become_method }}"
+  become_flags: "{{ gitea_effective_become_flags }}"
+  changed_when: true
+
+- name: Stop gitea service
+  ansible.builtin.command: "{{ gitea_service_stop_cmd }}"
+  become: true
+  changed_when: true
+
+- name: Create gitea backup dump
+  ansible.builtin.command: "{{ gitea_bin }} --config {{ gitea_conf }} --work-path {{ gitea_home }} dump {{ gitea_dump_opts }}"
+  args:
+    chdir: "{{ gitea_home }}"
+  become: true
+  become_user: "{{ gitea_user }}"
+  become_method: "{{ gitea_effective_become_method }}"
+  become_flags: "{{ gitea_effective_become_flags }}"
+  changed_when: true
+
+- name: Backup current gitea binary
+  ansible.builtin.copy:
+    src: "{{ gitea_bin }}"
+    dest: "{{ gitea_bin }}.bak"
+    remote_src: true
+    mode: preserve
+
+- name: Install new gitea binary
+  ansible.builtin.copy:
+    src: "{{ gitea_download_tmp }}/{{ gitea_binname }}"
+    dest: "{{ gitea_bin }}"
+    remote_src: true
+    owner: "{{ gitea_user }}"
+    mode: "0755"
+
+- name: Restore SELinux context on the new binary
+  ansible.builtin.command: restorecon -v {{ gitea_bin }}
+  become: true
+  changed_when: false
+  failed_when: false
+  when: ansible_facts.selinux is defined and ansible_facts.selinux.status | default('disabled') == 'enabled'
+
+- name: Start gitea service
+  ansible.builtin.command: "{{ gitea_service_start_cmd }}"
+  become: true
+  changed_when: true
+
+- name: Check gitea service status
+  ansible.builtin.command: "{{ gitea_service_status_cmd }}"
+  become: true
+  register: gitea_status
+  changed_when: false
+
+- name: Show gitea service status
+  ansible.builtin.debug:
+    var: gitea_status.stdout_lines
+
+- name: Clean up download scratch directory
+  ansible.builtin.file:
+    path: "{{ gitea_download_tmp }}"
+    state: absent
+
+- name: Report upgrade completion
+  ansible.builtin.debug:
+    msg: "Upgrade to {{ gitea_target_version }} successful!"

@@ -1,0 +1,49 @@
+---
+- name: Ensure download scratch directory exists
+  ansible.builtin.file:
+    path: "{{ gitea_download_tmp }}"
+    state: directory
+    owner: "{{ gitea_user }}"
+    mode: "0750"
+
+- name: Set release binary facts
+  ansible.builtin.set_fact:
+    gitea_binname: "gitea-{{ gitea_target_version }}-{{ gitea_arch }}"
+    gitea_baseurl: "https://dl.gitea.com/gitea/{{ gitea_target_version }}"
+
+- name: Download gitea release (sha256-verified)
+  ansible.builtin.get_url:
+    url: "{{ gitea_baseurl }}/{{ gitea_binname }}.xz"
+    dest: "{{ gitea_download_tmp }}/{{ gitea_binname }}.xz"
+    checksum: "sha256:{{ gitea_baseurl }}/{{ gitea_binname }}.xz.sha256"
+    owner: "{{ gitea_user }}"
+    mode: "0640"
+
+- name: Download GPG detached signature
+  ansible.builtin.get_url:
+    url: "{{ gitea_baseurl }}/{{ gitea_binname }}.xz.asc"
+    dest: "{{ gitea_download_tmp }}/{{ gitea_binname }}.xz.asc"
+    mode: "0640"
+  when: gitea_verify_gpg
+
+- name: Import Gitea maintainers' GPG key
+  ansible.builtin.command: gpg --keyserver keys.openpgp.org --recv {{ gitea_gpg_fingerprint }}
+  changed_when: false
+  when: gitea_verify_gpg
+
+- name: Verify GPG signature
+  ansible.builtin.command: >
+    gpg --verify {{ gitea_download_tmp }}/{{ gitea_binname }}.xz.asc {{ gitea_download_tmp }}/{{ gitea_binname }}.xz
+  changed_when: false
+  when: gitea_verify_gpg
+
+- name: Decompress release binary
+  ansible.builtin.command: xz --decompress --force {{ gitea_download_tmp }}/{{ gitea_binname }}.xz
+  args:
+    creates: "{{ gitea_download_tmp }}/{{ gitea_binname }}"
+
+- name: Set ownership and permissions on new binary
+  ansible.builtin.file:
+    path: "{{ gitea_download_tmp }}/{{ gitea_binname }}"
+    owner: "{{ gitea_user }}"
+    mode: "0755"

@@ -1,0 +1,79 @@
+---
+- name: Ensure gitea process is running
+  ansible.builtin.command: pidof gitea
+  register: gitea_pidof
+  changed_when: false
+
+- name: Ensure xz is available on the target
+  ansible.builtin.command: xz --version
+  register: gitea_xz_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if xz is missing
+  ansible.builtin.fail:
+    msg: "xz is required on the target host but was not found"
+  when: gitea_xz_check.rc != 0
+
+- name: Ensure gpg is available on the target
+  ansible.builtin.command: gpg --version
+  register: gitea_gpg_check
+  changed_when: false
+  failed_when: false
+  when: gitea_verify_gpg
+
+- name: Fail if gpg is missing
+  ansible.builtin.fail:
+    msg: "gpg is required on the target host but was not found (or set gitea_verify_gpg: false)"
+  when: gitea_verify_gpg and gitea_gpg_check.rc != 0
+
+- name: Detect OpenWrt
+  ansible.builtin.set_fact:
+    gitea_is_openwrt: "{{ (ansible_facts['distribution'] | default('')) == 'OpenWrt' }}"
+
+- name: Set service management and privilege-escalation facts
+  ansible.builtin.set_fact:
+    gitea_service_start_cmd: "{{ '/etc/init.d/gitea start' if gitea_is_openwrt else 'systemctl start ' + gitea_service_name }}"
+    gitea_service_stop_cmd: "{{ '/etc/init.d/gitea stop' if gitea_is_openwrt else 'systemctl stop ' + gitea_service_name }}"
+    gitea_service_status_cmd: "{{ '/etc/init.d/gitea status' if gitea_is_openwrt else 'systemctl status ' + gitea_service_name }}"
+    gitea_effective_become_method: "{{ 'su' if gitea_is_openwrt else gitea_become_method }}"
+    gitea_effective_become_flags: "{{ '-' if gitea_is_openwrt else '' }}"
+
+- name: Determine currently installed gitea version
+  ansible.builtin.command: "{{ gitea_bin }} --config {{ gitea_conf }} --work-path {{ gitea_home }} --version"
+  become: true
+  become_user: "{{ gitea_user }}"
+  become_method: "{{ gitea_effective_become_method }}"
+  become_flags: "{{ gitea_effective_become_flags }}"
+  register: gitea_current_version_raw
+  changed_when: false
+
+- name: Set current version fact
+  ansible.builtin.set_fact:
+    gitea_current_version: "{{ gitea_current_version_raw.stdout.split(' ')[2] }}"
+
+- name: Look up latest gitea version
+  ansible.builtin.uri:
+    url: https://dl.gitea.com/gitea/version.json
+    return_content: true
+  register: gitea_latest_version_json
+  when: gitea_version == "latest"
+
+- name: Set target version fact
+  ansible.builtin.set_fact:
+    gitea_target_version: "{{ gitea_latest_version_json.json.latest.version if gitea_version == 'latest' else gitea_version }}"
+
+- name: Report version status
+  ansible.builtin.debug:
+    msg: "Current gitea version: {{ gitea_current_version }}, target version: {{ gitea_target_version }}"
+
+- name: Upgrade gitea
+  when: gitea_current_version != gitea_target_version
+  block:
+    - ansible.builtin.include_tasks: download.yml
+    - ansible.builtin.include_tasks: upgrade.yml
+
+- name: Report no upgrade needed
+  ansible.builtin.debug:
+    msg: "Gitea {{ gitea_current_version }} already matches the target version, nothing to do."
+  when: gitea_current_version == gitea_target_version
