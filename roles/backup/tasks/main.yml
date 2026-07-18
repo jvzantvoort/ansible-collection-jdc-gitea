@@ -1,0 +1,48 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: Lookup local information about gitea
+  ansible.builtin.include_role:
+    name: jdc.gitea.lookup
+
+- name: Set backup file facts
+  ansible.builtin.set_fact:
+    gitea_server_backup_file_versioned: "{{ gitea_server_backup_path }}/gitea-dump-{{ ansible_date_time.date }}.zip"
+    gitea_server_backup_file: "{{ gitea_server_backup_path }}/{{ gitea_dump_file }}"
+
+- name: Create backup
+  become: true
+  become_user: "{{ gitea_user }}"
+  block:
+
+    - name: Create the download directory
+      ansible.builtin.file:
+        path: "{{ gitea_server_backup_path }}"
+        owner: "{{ gitea_user_name }}"
+        group: "{{ gitea_user_group }}"
+        state: directory
+        mode: '0750'
+
+    - name: Make sure to original dump does not exist
+      ansible.builtin.file:
+        path: "{{ gitea_server_backup_file }}"
+        state: absent
+
+    - name: Test if the versioned backup file exists
+      ignore_errors: true
+      ansible.builtin.stat:
+        path: "{{ gitea_server_backup_file_versioned }}"
+        get_checksum: false
+      register: gitea_server_backup_file_versioned_stat
+
+    - name: Create gitea backup dump
+      ansible.builtin.command: "{{ gitea_bin }} --config {{ gitea_conf }} --work-path {{ gitea_user_home }} dump {{ gitea_dump_opts }}"
+      args:
+        chdir: "{{ gitea_server_backup_path }}"
+      changed_when: true
+      when: not gitea_server_backup_file_versioned_stat.stat.exists
+
+    - name: Move backup into place
+      changed_when: false
+      ansible.builtin.command:
+        cmd: "mv {{ gitea_server_backup_file }} {{ gitea_server_backup_file_versioned }}"
+        creates: "{{ gitea_server_backup_file_versioned }}"

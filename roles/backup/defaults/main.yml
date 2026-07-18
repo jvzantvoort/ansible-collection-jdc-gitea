@@ -1,0 +1,5 @@
+#SPDX-License-Identifier: MIT-0
+---
+gitea_user: git
+gitea_dump_file: "gitea-dump.zip"
+gitea_dump_opts: "--file {{ gitea_dump_file }} --type zip"
